@@ -1444,7 +1444,6 @@ Profiler::Profiler()
 
     CalibrateTimer();
     CalibrateDelay();
-    ReportTopology();
 
 #ifdef __linux__
     m_kcore = (KCore*)tracy_malloc( sizeof( KCore ) );
