@@ -907,7 +907,6 @@ private:
 
     void CalibrateTimer();
     void CalibrateDelay();
-    void ReportTopology();
 
     static tracy_force_inline void SendCallstackSerial( void* ptr )
     {
