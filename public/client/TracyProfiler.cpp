@@ -425,7 +425,7 @@ static const char* GetProcessName()
     auto buf = getprogname();
     if( buf ) processName = buf;
 #  endif
-#elif __OHOS__
+#elif defined __OHOS__
 #elif defined __linux__ && defined _GNU_SOURCE
     if( program_invocation_short_name ) processName = program_invocation_short_name;
 #elif defined __APPLE__ || defined BSD
