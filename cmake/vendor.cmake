@@ -214,7 +214,7 @@ if (NOT NO_FILESELECTOR AND NOT EMSCRIPTEN)
         endif()
     endif()
 
-    file(GLOB_RECURSE NFD_HEADERS CONFIGURE_DEPENDS RELATIVE ${NFD_DIR} "*.h")
+    file(GLOB_RECURSE NFD_HEADERS CONFIGURE_DEPENDS ${NFD_DIR} "*.h")
     add_library(TracyNfd STATIC EXCLUDE_FROM_ALL ${NFD_SOURCES} ${NFD_HEADERS})
     target_include_directories(TracyNfd PUBLIC ${NFD_DIR})
 

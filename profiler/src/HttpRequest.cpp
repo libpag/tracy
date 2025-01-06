@@ -5,7 +5,6 @@
 
 #include "../public/common/TracySocket.hpp"
 #include "../public/common/TracyVersion.hpp"
-#include "GitRef.hpp"
 #include "HttpRequest.hpp"
 
 #if defined _WIN32
@@ -91,7 +90,7 @@ void HttpRequest( const char* server, const char* resource, int port, const std:
     tracy::Socket sock;
     if( !sock.ConnectBlocking( server, port ) ) return;
     char request[4096];
-    const auto len = sprintf( request, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Tracy Profiler %i.%i.%i (%s) [%s]\r\nConnection: close\r\nCache-Control: no-cache, no-store, must-revalidate\r\n\r\n", resource, server, tracy::Version::Major, tracy::Version::Minor, tracy::Version::Patch, GetOsInfo(), tracy::GitRef );
+    const auto len = sprintf( request, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Tracy Profiler %i.%i.%i (%s)\r\nConnection: close\r\nCache-Control: no-cache, no-store, must-revalidate\r\n\r\n", resource, server, tracy::Version::Major, tracy::Version::Minor, tracy::Version::Patch, GetOsInfo());
     sock.Send( request, len );
     char response[4096];
     const auto sz = sock.ReadUpTo( response, 4096 );
