@@ -49,9 +49,9 @@ struct WebSocketClient {
     bool sendMessage(char* text, int textLength);
     Message* recvMssage();
     static EM_BOOL onOpen(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData);
-    static EM_BOOL onClose(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData);
-    static EM_BOOL onError(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData);
-    static EM_BOOL onMessage(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData);
+    static EM_BOOL onClose(int eventType, const EmscriptenWebSocketCloseEvent *websocketEvent, void *userData);
+    static EM_BOOL onError(int eventType, const EmscriptenWebSocketErrorEvent *websocketEvent, void *userData);
+    static EM_BOOL onMessage(int eventType, const EmscriptenWebSocketMessageEvent *websocketEvent, void *userData);
 };
 #endif
 

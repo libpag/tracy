@@ -15,6 +15,7 @@
 #include "TracySysTime.hpp"
 #include "TracyFastVector.hpp"
 #include "../common/TracyQueue.hpp"
+#include "../common/TracySocket.hpp"
 #include "../common/TracyAlign.hpp"
 #include "../common/TracyAlloc.hpp"
 #include "../common/TracyMutex.hpp"
@@ -990,6 +991,9 @@ private:
     std::atomic<bool> m_shutdownManual;
     std::atomic<bool> m_shutdownFinished;
     Socket* m_sock;
+#ifdef __EMSCRIPTEN__
+    WebSocketClient* m_webSocket;
+#endif
     UdpBroadcast* m_broadcast;
     bool m_noExit;
     uint32_t m_userPort;
