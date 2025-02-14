@@ -84,8 +84,7 @@ TRACY_API uint32_t GetThreadHandleImpl()
 #elif defined __QNX__
     return (uint32_t) gettid();
 #elif defined __EMSCRIPTEN__
-    // Not supported, but let it compile.
-    return 0;
+    return pthread_self();
 #else
     // To add support for a platform, retrieve and return the kernel thread identifier here.
     //

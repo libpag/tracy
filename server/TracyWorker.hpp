@@ -453,6 +453,7 @@ public:
         NUM_FAILURES
     };
 
+    Worker(int64_t memoryLimit);
     Worker( const char* addr, uint16_t port, int64_t memoryLimit );
     Worker( const char* name, const char* program, const std::vector<ImportEventTimeline>& timeline, const std::vector<ImportEventMessages>& messages, const std::vector<ImportEventPlots>& plots, const std::unordered_map<uint64_t, std::string>& threadNames );
     Worker( FileRead& f, EventType::Type eventMask = EventType::All, bool bgTasks = true, bool allowStringModification = false);
@@ -685,10 +686,13 @@ public:
 private:
     void Network();
     void Exec();
+    void NetworkWs();
+    void ExecWs();
     void Query( ServerQuery type, uint64_t data, uint32_t extra = 0 );
     void QueryTerminate();
     void QuerySourceFile( const char* fn, const char* image );
     void QueryDataTransfer( const void* ptr, size_t size );
+    bool WsHandshake();
 
     tracy_force_inline bool DispatchProcess( const QueueItem& ev, const char*& ptr );
     tracy_force_inline bool Process( const QueueItem& ev );
@@ -970,6 +974,7 @@ private:
     int64_t TscPeriod( uint64_t tsc ) { return int64_t( tsc * m_timerMul ); }
 
     Socket m_sock;
+    Socket* m_wsClientSock;
     std::string m_addr;
     uint16_t m_port;
 

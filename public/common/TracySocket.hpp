@@ -5,6 +5,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __EMSCRIPTEN__
+#include <queue>
+#include <emscripten.h>
+#include <emscripten/websocket.h>
+#include <emscripten/threading.h>
+#endif
+
 struct addrinfo;
 struct sockaddr;
 
@@ -13,6 +20,39 @@ namespace tracy
 
 #ifdef _WIN32
 void InitWinSock();
+#endif
+
+#ifdef __EMSCRIPTEN__
+struct WebSocketClient {
+    enum MessageType
+    {
+        Text,
+        Binary,
+        Close,
+    };
+
+    struct Message
+    {
+        MessageType type;
+        std::string data;
+        bool readRaw(std::string& buf, int len);
+    };
+
+    EMSCRIPTEN_WEBSOCKET_T ws;
+    bool isConnect = false;
+    std::queue<Message> queue;
+    std::string error;
+    Message buffer;
+
+    WebSocketClient(const char* url);
+    bool hasMessage();
+    bool sendMessage(char* text, int textLength);
+    Message* recvMssage();
+    static EM_BOOL onOpen(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData);
+    static EM_BOOL onClose(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData);
+    static EM_BOOL onError(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData);
+    static EM_BOOL onMessage(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData);
+};
 #endif
 
 class Socket
@@ -31,6 +71,7 @@ public:
 
     int ReadUpTo( void* buf, int len );
     bool Read( void* buf, int len, int timeout );
+    bool ReadMax(void* buf, int& maxLen, int timeout);
 
     template<typename ShouldExit>
     bool Read( void* buf, int len, int timeout, ShouldExit exitCb )

@@ -69,6 +69,101 @@ void InitWinSock()
 }
 #endif
 
+#ifdef __EMSCRIPTEN__
+bool WebSocketClient::Message::readRaw(std::string& buf, int len) {
+    if (type == MessageType::Close || data.length() < len) {
+        return false;
+    }
+    buf = data.substr(0, len);
+    if (data.length() > len) {
+        data = data.substr(len, data.length() - len);
+    }
+    else {
+        data.clear();
+    }
+    return true;
+}
+
+WebSocketClient::WebSocketClient(const char* url) {
+    EmscriptenWebSocketCreateAttributes ws_attrs = {url, NULL, EM_TRUE};
+    ws = emscripten_websocket_new(&ws_attrs);
+    if (!ws)
+    {
+        error = "emscripten_websocket_new: ";
+        error += std::to_string(ws);
+        return;
+    }
+
+    emscripten_websocket_set_onopen_callback(ws, this, onOpen);
+    emscripten_websocket_set_onerror_callback(ws, this, onError);
+    emscripten_websocket_set_onclose_callback(ws, this, onClose);
+    emscripten_websocket_set_onmessage_callback(ws, this, onMessage);
+}
+
+bool WebSocketClient::hasMessage()
+{
+    return !queue.empty();
+}
+
+bool WebSocketClient::sendMessage(char* text, int textLength){
+    EMSCRIPTEN_RESULT ret = emscripten_websocket_send_binary(ws, text, textLength);
+    if (ret != EMSCRIPTEN_RESULT_SUCCESS) {
+        error = "emscripten_websocket_send_utf8_text: ";
+        error += std::to_string(ret);
+        return true;
+    }
+    return true;
+}
+
+WebSocketClient::Message* WebSocketClient::recvMssage(){
+    uint64_t lastTime = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    while (queue.empty())
+    {
+        const auto t = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        if (t - lastTime > 3000000000)
+        {
+            return nullptr;
+        }
+    }
+    buffer = std::move(queue.front());
+    queue.pop();
+    return &buffer;
+}
+
+EM_BOOL WebSocketClient::onOpen(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData) {
+    auto wsClient = static_cast<WebSocketClient*>(userData);
+    wsClient->isConnect = true;
+    return EM_TRUE;
+}
+
+EM_BOOL WebSocketClient::onClose(int eventType, const EmscriptenWebSocketCloseEvent *websocketEvent, void *userData) {
+    auto wsClient = static_cast<WebSocketClient*>(userData);
+    wsClient->queue.push(Message
+    {
+        MessageType::Close,
+        websocketEvent->reason
+    });
+    wsClient->isConnect = false;
+    return EM_TRUE;
+}
+
+EM_BOOL WebSocketClient::onError(int eventType, const EmscriptenWebSocketErrorEvent *websocketEvent, void *userData) {
+    auto wsClient = static_cast<WebSocketClient*>(userData);
+    wsClient->error = "communication error";
+    return EM_TRUE;
+}
+
+EM_BOOL WebSocketClient::onMessage(int eventType, const EmscriptenWebSocketMessageEvent *websocketEvent, void *userData) {
+    auto wsClient = static_cast<WebSocketClient*>(userData);
+    wsClient->queue.push(Message
+    {
+        websocketEvent->isText ? MessageType::Text : MessageType::Binary,
+        { websocketEvent->data, websocketEvent->data + websocketEvent->numBytes - (websocketEvent->isText ? 1 : 0) }
+    });
+    return EM_TRUE;
+}
+#endif
+
 
 enum { BufSize = 128 * 1024 };
 
@@ -384,6 +479,13 @@ bool Socket::Read( void* buf, int len, int timeout )
     return true;
 }
 
+bool Socket::ReadMax(void* buf, int& maxLen, int timeout)
+{
+    auto cbuf = (char*)buf;
+    if(!ReadImpl( cbuf, maxLen, timeout)) return false;
+    return true;
+}
+
 bool Socket::ReadImpl( char*& buf, int& len, int timeout )
 {
     const auto sz = RecvBuffered( buf, len, timeout );
@@ -495,6 +597,9 @@ bool ListenSocket::Listen( uint16_t port, int backlog )
 #if defined _WIN32
     unsigned long val = 0;
     setsockopt( m_sock, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&val, sizeof( val ) );
+#elif defined __EMSCRIPTEN__
+    int val = 1;
+    setsockopt( m_sock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof( val ) );
 #elif defined BSD
     int val = 0;
     setsockopt( m_sock, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&val, sizeof( val ) );
@@ -624,6 +729,8 @@ void UdpBroadcast::Close()
 
 int UdpBroadcast::Send( uint16_t port, const void* data, int len )
 {
+    char strAddr[17];
+    inet_ntop( AF_INET, &m_addr, strAddr, 17 );
     assert( m_sock != -1 );
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;

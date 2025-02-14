@@ -68,6 +68,39 @@ View::View( void(*cbMainThread)(const std::function<void()>&, bool), const char*
     SetupConfig( config );
 }
 
+View::View( void(*cbMainThread)(const std::function<void()>&, bool), ImFont* fixedWidth, ImFont* smallFont, ImFont* bigFont, SetTitleCallback stcb, SetScaleCallback sscb, AttentionCallback acb, const Config& config, AchievementsMgr* amgr )
+    : m_worker( config.memoryLimit == 0 ? -1 : ( config.memoryLimitPercent * tracy::GetPhysicalMemorySize() / 100 ) )
+    , m_staticView( false )
+    , m_viewMode( ViewMode::LastFrames )
+    , m_viewModeHeuristicTry( true )
+    , m_totalMemory( GetPhysicalMemorySize() )
+    , m_forceConnectionPopup( true, true )
+    , m_tc( *this, m_worker, config.threadedRendering )
+    , m_frames( nullptr )
+    , m_messagesScrollBottom( true )
+    , m_reactToCrash( true )
+    , m_reactToLostConnection( true )
+    , m_smallFont( smallFont )
+    , m_bigFont( bigFont )
+    , m_fixedFont( fixedWidth )
+    , m_stcb( stcb )
+    , m_sscb( sscb )
+    , m_acb( acb )
+    , m_cbMainThread( cbMainThread )
+    , m_achievementsMgr( amgr )
+    , m_achievements( config.achievements )
+    , m_horizontalScrollMultiplier( config.horizontalScrollMultiplier )
+    , m_verticalScrollMultiplier( config.verticalScrollMultiplier )
+#ifdef __EMSCRIPTEN__
+    , m_td( 2, "ViewMt" )
+#else
+    , m_td( std::thread::hardware_concurrency(), "ViewMt" )
+#endif
+{
+    InitTextEditor();
+    SetupConfig( config );
+}
+
 View::View( void(*cbMainThread)(const std::function<void()>&, bool), FileRead& f, ImFont* fixedWidth, ImFont* smallFont, ImFont* bigFont, SetTitleCallback stcb, SetScaleCallback sscb, AttentionCallback acb, const Config& config, AchievementsMgr* amgr )
     : m_worker( f )
     , m_filename( f.GetFilename() )

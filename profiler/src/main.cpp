@@ -1032,6 +1032,10 @@ static void DrawContents()
         }
         ImGui::SameLine( 0, ImGui::GetTextLineHeight() * 2 );
 
+        if (ImGui::Button( ICON_FA_FOLDER_OPEN " Open WebSocket server" ))
+        {
+            view = std::make_unique<tracy::View>( RunOnMainThread, s_fixedWidth, s_smallFont, s_bigFont, SetWindowTitleCallback, SetupScaleCallback, AttentionCallback, s_config, s_achievements );
+        }
 #ifndef TRACY_NO_FILESELECTOR
         if( ImGui::Button( ICON_FA_FOLDER_OPEN " Open saved trace" ) && !loadThread.joinable() )
         {

@@ -31,6 +31,7 @@
 #include "../public/common/TracyYield.hpp"
 #include "../public/common/TracyStackFrames.hpp"
 #include "../public/common/TracyVersion.hpp"
+#include "../public/common/WSSession.h"
 #include "TracyFileRead.hpp"
 #include "TracyFileWrite.hpp"
 #include "TracyPrint.hpp"
@@ -254,6 +255,47 @@ static bool IsQueryPrio( ServerQuery type )
 
 
 LoadProgress Worker::s_loadProgress;
+Worker::Worker(int64_t memoryLimit)
+    : m_hasData( false )
+    , m_stream( LZ4_createStreamDecode() )
+    , m_buffer( new char[TargetFrameSize*3 + 1] )
+    , m_bufferOffset( 0 )
+    , m_inconsistentSamples( false )
+    , m_pendingStrings( 0 )
+    , m_pendingThreads( 0 )
+    , m_pendingFibers( 0 )
+    , m_pendingExternalNames( 0 )
+    , m_pendingSourceLocation( 0 )
+    , m_pendingCallstackFrames( 0 )
+    , m_pendingCallstackSubframes( 0 )
+    , m_pendingSymbolCode( 0 )
+    , m_memoryLimit( memoryLimit )
+    , m_callstackFrameStaging( nullptr )
+    , m_traceVersion( CurrentVersion )
+    , m_loadTime( 0 )
+{
+    m_data.sourceLocationExpand.push_back( 0 );
+    m_data.localThreadCompress.InitZero();
+    m_data.callstackPayload.push_back( nullptr );
+    m_data.zoneExtra.push_back( ZoneExtra {} );
+    m_data.symbolLocInline.push_back( std::numeric_limits<uint64_t>::max() );
+    m_data.memory = m_slab.AllocInit<MemData>();
+    m_data.memNameMap.emplace( 0, m_data.memory );
+
+    memset( (char*)m_gpuCtxMap, 0, sizeof( m_gpuCtxMap ) );
+
+#ifndef TRACY_NO_STATISTICS
+    m_data.sourceLocationZonesReady = true;
+    m_data.gpuSourceLocationZonesReady = true;
+    m_data.callstackSamplesReady = true;
+    m_data.ghostZonesReady = true;
+    m_data.ctxUsageReady = true;
+    m_data.symbolSamplesReady = true;
+#endif
+
+    m_thread = std::thread( [this] { SetThreadName( "Tracy Worker" ); ExecWs(); } );
+    m_threadNet = std::thread( [this] { SetThreadName( "Tracy Network" ); NetworkWs(); } );
+}
 
 Worker::Worker( const char* addr, uint16_t port, int64_t memoryLimit )
     : m_addr( addr )
@@ -2640,6 +2682,316 @@ const unordered_flat_map<CallstackFrameId, uint32_t, Worker::CallstackFrameIdHas
 }
 #endif
 
+
+bool Worker::WsHandshake()
+{
+    const int maxBuffer = 1024;
+    int bufferSize = maxBuffer;
+    char buffer[maxBuffer];
+    bool read = false;
+    while (bufferSize == maxBuffer)
+    {
+        read = m_wsClientSock->ReadMax(buffer, bufferSize, 0);
+    }
+    if (!read)
+    {
+        return false;
+    }
+    return SendHandshake(m_wsClientSock, buffer);
+}
+
+void Worker::NetworkWs()
+{
+    auto lz4buf = std::unique_ptr<char[]>( new char[LZ4Size] );
+
+    for(;;)
+    {
+        {
+            std::unique_lock<std::mutex> lock( m_netWriteLock );
+            m_netWriteCv.wait( lock, [this] { return m_netWriteCnt > 0 || m_shutdown.load( std::memory_order_relaxed ); } );
+            if( m_shutdown.load( std::memory_order_relaxed ) ) goto close;
+            m_netWriteCnt--;
+        }
+
+        auto buf = m_buffer + m_bufferOffset;
+        lz4sz_t lz4sz;
+        std::vector<uint8_t> frameData;
+        if (!WSRecvMessage2(m_wsClientSock, frameData, 10 ))
+        {
+            goto close;
+        }
+        std::cout << "recv message length = " << frameData.size() << std::endl;
+        memcpy( &lz4sz, frameData.data(), sizeof(lz4sz) );
+        memcpy( lz4buf.get(), frameData.data() + sizeof(lz4sz), lz4sz );
+        frameData.clear();
+
+        auto bb = m_bytes.load( std::memory_order_relaxed );
+        m_bytes.store( bb + sizeof( lz4sz ) + lz4sz, std::memory_order_relaxed );
+
+        auto sz = LZ4_decompress_safe_continue( (LZ4_streamDecode_t*)m_stream, lz4buf.get(), buf, lz4sz, TargetFrameSize );
+        assert( sz >= 0 );
+        bb = m_decBytes.load( std::memory_order_relaxed );
+        m_decBytes.store( bb + sz, std::memory_order_relaxed );
+
+        {
+            std::lock_guard<std::mutex> lock( m_netReadLock );
+            m_netRead.push_back( NetBuffer { m_bufferOffset, sz } );
+            m_netReadCv.notify_one();
+        }
+
+        m_bufferOffset += sz;
+        if( m_bufferOffset > TargetFrameSize * 2 ) m_bufferOffset = 0;
+    }
+
+close:
+    std::lock_guard<std::mutex> lock( m_netReadLock );
+    m_netRead.push_back( NetBuffer { -1 } );
+    m_netReadCv.notify_one();
+}
+
+void Worker::ExecWs()
+{
+    auto ShouldExit = [this] { return m_shutdown.load( std::memory_order_relaxed ); };
+
+    std::chrono::time_point<std::chrono::high_resolution_clock> t0;
+    uint32_t protocolVersion = ProtocolVersion;
+    ListenSocket listen;
+    bool isListen = listen.Listen(8086, 4);
+    if (!isListen)
+    {
+        goto close;
+    }
+    for(;;)
+    {
+        if(m_shutdown.load(std::memory_order_relaxed)) { m_netWriteCv.notify_one(); return; };
+        m_wsClientSock = listen.Accept();
+        if(m_wsClientSock) { break; }
+        std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
+    }
+
+    if (!WsHandshake())
+    {
+        m_handshake.store( HandshakeDropped, std::memory_order_relaxed );
+        goto close;
+    }
+
+    WSSendMessage(m_wsClientSock, HandshakeShibboleth, HandshakeShibbolethSize);
+    WSSendMessage(m_wsClientSock, &protocolVersion, sizeof( protocolVersion ) );
+    HandshakeStatus handshake;
+    if( !WSRecvMessage(m_wsClientSock, &handshake, sizeof( handshake ), 10) )
+    {
+        m_handshake.store( HandshakeDropped, std::memory_order_relaxed );
+        goto close;
+    }
+    m_handshake.store( handshake, std::memory_order_relaxed );
+    switch( handshake )
+    {
+    case HandshakeWelcome:
+        break;
+    case HandshakeProtocolMismatch:
+    case HandshakeNotAvailable:
+    default:
+        goto close;
+    }
+
+    m_data.framesBase = m_data.frames.Retrieve( 0, [this] ( uint64_t name ) {
+        auto fd = m_slab.AllocInit<FrameData>();
+        fd->name = name;
+        fd->continuous = 1;
+        return fd;
+    }, [this] ( uint64_t name ) {
+        assert( name == 0 );
+        char tmp[6] = "Frame";
+        HandleFrameName( name, tmp, 5 );
+    } );
+    {
+        WelcomeMessage welcome;
+        if( !WSRecvMessage(m_wsClientSock, &welcome, sizeof( welcome ), 10) )
+        {
+            m_handshake.store( HandshakeDropped, std::memory_order_relaxed );
+            goto close;
+        }
+        m_timerMul = welcome.timerMul;
+        m_data.baseTime = welcome.initBegin;
+        const auto initEnd = TscTime( welcome.initEnd );
+        m_data.framesBase->frames.push_back( FrameEvent{ 0, -1, -1 } );
+        m_data.framesBase->frames.push_back( FrameEvent{ initEnd, -1, -1 } );
+        m_data.lastTime = initEnd;
+        m_delay = TscPeriod( welcome.delay );
+        m_resolution = TscPeriod( welcome.resolution );
+        m_pid = welcome.pid;
+        m_samplingPeriod = welcome.samplingPeriod;
+        m_onDemand = welcome.flags & WelcomeFlag::OnDemand;
+        m_captureProgram = welcome.programName;
+        m_captureTime = welcome.epoch;
+        m_executableTime = welcome.exectime;
+        m_ignoreMemFreeFaults = ( welcome.flags & WelcomeFlag::OnDemand ) || ( welcome.flags & WelcomeFlag::IsApple );
+        m_ignoreFrameEndFaults = welcome.flags & WelcomeFlag::OnDemand;
+        m_data.cpuArch = (CpuArchitecture)welcome.cpuArch;
+        m_codeTransfer = welcome.flags & WelcomeFlag::CodeTransfer;
+        m_combineSamples = welcome.flags & WelcomeFlag::CombineSamples;
+        m_identifySamples = welcome.flags & WelcomeFlag::IdentifySamples;
+        m_data.cpuId = welcome.cpuId;
+        memcpy( m_data.cpuManufacturer, welcome.cpuManufacturer, 12 );
+        m_data.cpuManufacturer[12] = '\0';
+
+        char dtmp[64];
+        time_t date = welcome.epoch;
+        auto lt = localtime( &date );
+        strftime( dtmp, 64, "%F %T", lt );
+        char tmp[1024];
+        sprintf( tmp, "%s @ %s", welcome.programName, dtmp );
+        m_captureName = tmp;
+
+        m_hostInfo = welcome.hostInfo;
+
+        if( m_onDemand )
+        {
+            OnDemandPayloadMessage onDemand;
+            if( !WSRecvMessage(m_wsClientSock, &onDemand, sizeof( onDemand ), 10 ) )
+            {
+                m_handshake.store( HandshakeDropped, std::memory_order_relaxed );
+                goto close;
+            }
+            m_data.frameOffset = onDemand.frames;
+            m_data.framesBase->frames.push_back( FrameEvent{ TscTime( onDemand.currentTime ), -1, -1 } );
+        }
+    }
+
+    m_serverQuerySpaceBase = m_serverQuerySpaceLeft = std::min( ( m_wsClientSock->GetSendBufSize() / ServerQueryPacketSize ), 8*1024 ) - 4;   // leave space for terminate request
+    m_hasData.store( true, std::memory_order_release );
+
+    LZ4_setStreamDecode( (LZ4_streamDecode_t*)m_stream, nullptr, 0 );
+    m_connected.store( true, std::memory_order_relaxed );
+    {
+        std::lock_guard<std::mutex> lock( m_netWriteLock );
+        m_netWriteCnt = 2;
+        m_netWriteCv.notify_one();
+    }
+
+    t0 = std::chrono::high_resolution_clock::now();
+    for(;;)
+    {
+        if( m_shutdown.load( std::memory_order_relaxed ) || ( m_memoryLimit > 0 && memUsage.load( std::memory_order_relaxed ) > m_memoryLimit ) )
+        {
+            QueryTerminate();
+            goto close;
+        }
+
+        NetBuffer netbuf;
+        {
+            std::unique_lock<std::mutex> lock( m_netReadLock );
+            m_netReadCv.wait( lock, [this] { return !m_netRead.empty(); } );
+            netbuf = m_netRead.front();
+            m_netRead.erase( m_netRead.begin() );
+        }
+        if( netbuf.bufferOffset < 0 )
+        {
+            goto close;
+        }
+
+        const char* ptr = m_buffer + netbuf.bufferOffset;
+        const char* end = ptr + netbuf.size;
+
+        {
+            std::lock_guard<std::mutex> lock( m_data.lock );
+            while( ptr < end )
+            {
+                auto ev = (const QueueItem*)ptr;
+                if( !DispatchProcess( *ev, ptr ) )
+                {
+                    if( m_failure != Failure::None ) HandleFailure( ptr, end );
+                    QueryTerminate();
+                    goto close;
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lock( m_netWriteLock );
+                m_netWriteCnt++;
+                m_netWriteCv.notify_one();
+            }
+
+            if( m_serverQuerySpaceLeft > 0 && !m_serverQueryQueuePrio.empty() )
+            {
+                const auto toSend = std::min( m_serverQuerySpaceLeft, m_serverQueryQueuePrio.size() );
+                WSSendMessage(m_wsClientSock,  m_serverQueryQueuePrio.data(), toSend * ServerQueryPacketSize );
+                m_serverQuerySpaceLeft -= toSend;
+                if( toSend == m_serverQueryQueuePrio.size() )
+                {
+                    m_serverQueryQueuePrio.clear();
+                }
+                else
+                {
+                    m_serverQueryQueuePrio.erase( m_serverQueryQueuePrio.begin(), m_serverQueryQueuePrio.begin() + toSend );
+                }
+            }
+            if( m_serverQuerySpaceLeft > 0 && !m_serverQueryQueue.empty() )
+            {
+                const auto toSend = std::min( m_serverQuerySpaceLeft, m_serverQueryQueue.size() );
+                WSSendMessage(m_wsClientSock,  m_serverQueryQueue.data(), toSend * ServerQueryPacketSize );
+                m_serverQuerySpaceLeft -= toSend;
+                if( toSend == m_serverQueryQueue.size() )
+                {
+                    m_serverQueryQueue.clear();
+                }
+                else
+                {
+                    m_serverQueryQueue.erase( m_serverQueryQueue.begin(), m_serverQueryQueue.begin() + toSend );
+                }
+            }
+        }
+
+        auto t1 = std::chrono::high_resolution_clock::now();
+        auto td = std::chrono::duration_cast<std::chrono::milliseconds>( t1 - t0 ).count();
+        enum { MbpsUpdateTime = 200 };
+        if( td > MbpsUpdateTime )
+        {
+            UpdateMbps( td );
+            t0 = t1;
+        }
+
+        if( m_terminate )
+        {
+            if( m_pendingStrings != 0 || m_pendingThreads != 0 || m_pendingSourceLocation != 0 || m_pendingCallstackFrames != 0 ||
+                m_data.plots.IsPending() || m_pendingCallstackId != 0 || m_pendingExternalNames != 0 ||
+                m_pendingCallstackSubframes != 0 || m_pendingFrameImageData.image != nullptr || !m_pendingSymbols.empty() ||
+                m_pendingSymbolCode != 0 || !m_serverQueryQueue.empty() || !m_serverQueryQueuePrio.empty() ||
+                m_pendingSourceLocationPayload != 0 || m_pendingSingleString.ptr != nullptr || m_pendingSecondString.ptr != nullptr ||
+                !m_sourceCodeQuery.empty() || m_pendingFibers != 0 )
+            {
+                continue;
+            }
+            if( !m_crashed && !m_disconnect )
+            {
+                bool done = true;
+                for( auto& v : m_data.threads )
+                {
+                    if( !v->stack.empty() )
+                    {
+                        done = false;
+                        break;
+                    }
+                }
+                if( !done ) continue;
+            }
+            QueryTerminate();
+            UpdateMbps( 0 );
+            break;
+        }
+    }
+close:
+    Shutdown();
+    m_netWriteCv.notify_one();
+    if (m_wsClientSock)
+    {
+        m_wsClientSock->Close();
+    }
+    m_wsClientSock = nullptr;
+    m_connected.store( false, std::memory_order_relaxed );
+}
+
+
 void Worker::Network()
 {
     auto ShouldExit = [this] { return m_shutdown.load( std::memory_order_relaxed ); };
@@ -2977,7 +3329,14 @@ void Worker::HandleFailure( const char* ptr, const char* end )
         if( m_serverQuerySpaceLeft > 0 && !m_serverQueryQueuePrio.empty() )
         {
             const auto toSend = std::min( m_serverQuerySpaceLeft, m_serverQueryQueuePrio.size() );
-            m_sock.Send( m_serverQueryQueuePrio.data(), toSend * ServerQueryPacketSize );
+            if (m_wsClientSock->IsValid())
+            {
+                WSSendMessage(m_wsClientSock, m_serverQueryQueuePrio.data(), toSend * ServerQueryPacketSize );
+            }
+            else
+            {
+                m_sock.Send( m_serverQueryQueuePrio.data(), toSend * ServerQueryPacketSize );
+            }
             m_serverQuerySpaceLeft -= toSend;
             if( toSend == m_serverQueryQueuePrio.size() )
             {
@@ -2991,7 +3350,14 @@ void Worker::HandleFailure( const char* ptr, const char* end )
         if( m_serverQuerySpaceLeft > 0 && !m_serverQueryQueue.empty() )
         {
             const auto toSend = std::min( m_serverQuerySpaceLeft, m_serverQueryQueue.size() );
-            m_sock.Send( m_serverQueryQueue.data(), toSend * ServerQueryPacketSize );
+            if (m_wsClientSock->IsValid())
+            {
+                WSSendMessage(m_wsClientSock, m_serverQueryQueue.data(), toSend * ServerQueryPacketSize );
+            }
+            else
+            {
+                m_sock.Send( m_serverQueryQueue.data(), toSend * ServerQueryPacketSize );
+            }
             m_serverQuerySpaceLeft -= toSend;
             if( toSend == m_serverQueryQueue.size() )
             {
@@ -3119,7 +3485,13 @@ void Worker::Query( ServerQuery type, uint64_t data, uint32_t extra )
     if( m_serverQuerySpaceLeft > 0 && m_serverQueryQueuePrio.empty() && m_serverQueryQueue.empty() )
     {
         m_serverQuerySpaceLeft--;
-        m_sock.Send( &query, ServerQueryPacketSize );
+        if (m_wsClientSock->IsValid())
+        {
+            WSSendMessage(m_wsClientSock, &query, ServerQueryPacketSize );
+        } else
+        {
+            m_sock.Send( &query, ServerQueryPacketSize );
+        }
     }
     else if( IsQueryPrio( type ) )
     {
@@ -3134,7 +3506,13 @@ void Worker::Query( ServerQuery type, uint64_t data, uint32_t extra )
 void Worker::QueryTerminate()
 {
     ServerQueryPacket query { ServerQueryTerminate, 0, 0 };
-    m_sock.Send( &query, ServerQueryPacketSize );
+    if (m_wsClientSock)
+    {
+        WSSendMessage(m_wsClientSock, &query, ServerQueryPacketSize );
+    } else
+    {
+        m_sock.Send( &query, ServerQueryPacketSize );
+    }
 }
 
 void Worker::QuerySourceFile( const char* fn, const char* image )
@@ -3605,7 +3983,10 @@ void Worker::CheckThreadString( uint64_t id )
     m_data.threadNames.emplace( id, "???" );
     m_pendingThreads++;
 
-    if( m_sock.IsValid() ) Query( ServerQueryThreadString, id );
+    if( m_sock.IsValid() || m_wsClientSock->IsValid() )
+    {
+        Query( ServerQueryThreadString, id );
+    }
 }
 
 void Worker::CheckFiberName( uint64_t id, uint64_t tid )
@@ -3615,7 +3996,10 @@ void Worker::CheckFiberName( uint64_t id, uint64_t tid )
     m_data.threadNames.emplace( tid, "???" );
     m_pendingFibers++;
 
-    if( m_sock.IsValid() ) Query( ServerQueryFiberName, id );
+    if( m_sock.IsValid() || m_wsClientSock->IsValid()  )
+    {
+        Query( ServerQueryFiberName, id );
+    }
 }
 
 void Worker::CheckExternalName( uint64_t id )

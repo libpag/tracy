@@ -149,6 +149,8 @@ set(client_includes
     ${TRACY_PUBLIC_DIR}/client/TracyThread.hpp)
 
 set(common_includes
+    ${TRACY_PUBLIC_DIR}/common/sha1.h
+    ${TRACY_PUBLIC_DIR}/common/WSSession.h
     ${TRACY_PUBLIC_DIR}/common/tracy_lz4.hpp
     ${TRACY_PUBLIC_DIR}/common/tracy_lz4hc.hpp
     ${TRACY_PUBLIC_DIR}/common/TracyAlign.hpp

@@ -130,6 +130,11 @@ extern "C" typedef char* (WINAPI *t_WineGetBuildId)();
 extern char* __progname;
 #endif
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <emscripten/websocket.h>
+#include <emscripten/threading.h>
+#endif
 namespace tracy
 {
 
@@ -1480,7 +1485,7 @@ Profiler::Profiler()
     fcntl( m_pipe[1], F_SETFL, O_NONBLOCK );
 #endif
 
-#if !defined(__EMSCRIPTEN__) && (!defined(TRACY_DELAYED_INIT) || !defined(TRACY_MANUAL_LIFETIME))
+#if (!defined(TRACY_DELAYED_INIT) || !defined(TRACY_MANUAL_LIFETIME))
     SpawnWorkerThreads();
 #endif
 }
@@ -1774,6 +1779,126 @@ void Profiler::Worker()
 
     moodycamel::ConsumerToken token( GetQueue() );
 
+#ifdef __EMSCRIPTEN__
+    for (;;)
+    {
+        if (m_webSocket)
+        {
+            tracy_free(m_webSocket);
+            m_webSocket = nullptr;
+        }
+        m_webSocket = new WebSocketClient("ws://localhost:8086");
+        // if (!m_webSocket->isConnect) break;
+        // Handshake
+        {
+            auto message = m_webSocket->recvMssage();
+            if (!message || message->type == WebSocketClient::MessageType::Close)
+            {
+                continue;
+            }
+            std::string shibboleth;
+            message->readRaw(shibboleth, HandshakeShibbolethSize);
+            if (memcmp( shibboleth.c_str(), HandshakeShibboleth, HandshakeShibbolethSize ) != 0)
+            {
+                emscripten_websocket_close(m_webSocket->ws, 1000, "no reason");
+                tracy_free(m_webSocket);
+                m_webSocket = nullptr;
+                continue;
+            }
+
+            message = m_webSocket->recvMssage();
+            if (!message || message->type == WebSocketClient::MessageType::Close)
+            {
+                continue;
+            }
+            std::string strProtocolVersion;
+            message->readRaw(strProtocolVersion, 1);
+            uint32_t protocolVersion = static_cast<int>(strProtocolVersion[0]);
+            if (protocolVersion != ProtocolVersion)
+            {
+                HandshakeStatus status = HandshakeProtocolMismatch;
+                m_webSocket->sendMessage( (char*)&status, sizeof(status));
+                tracy_free(m_webSocket);
+                m_webSocket = nullptr;
+                continue;
+            }
+        }
+
+        m_isConnected.store( true, std::memory_order_release );
+        HandshakeStatus handshake = HandshakeWelcome;
+        m_webSocket->sendMessage((char*)&handshake, sizeof(handshake));
+
+        LZ4_resetStream((LZ4_stream_t*)m_stream);
+        m_webSocket->sendMessage((char*)&welcome, sizeof(welcome));
+
+        m_threadCtx = 0;
+        m_refTimeSerial = 0;
+        m_refTimeCtx = 0;
+        m_refTimeGpu = 0;
+
+        int keepAlive = 0;
+        for (;;)
+        {
+            ProcessSysTime();
+            const auto status = Dequeue(token);
+            const auto serialStatus = DequeueSerial();
+            if( status == DequeueStatus::ConnectionLost || serialStatus == DequeueStatus::ConnectionLost )
+            {
+                break;
+            }
+            else if( status == DequeueStatus::QueueEmpty && serialStatus == DequeueStatus::QueueEmpty )
+            {
+                if (ShouldExit())
+                {
+                    break;
+                }
+                if (m_bufferOffset != m_bufferStart)
+                {
+                    if (!CommitData())
+                    {
+                        break;
+                    }
+                }
+                if(keepAlive == 500)
+                {
+                    QueueItem ka;
+                    ka.hdr.type = QueueType::KeepAlive;
+                    AppendData(&ka, QueueDataSize[ka.hdr.idx]);
+                    if(!CommitData()) break;
+                    keepAlive = 0;
+                }
+                else if(!m_webSocket->hasMessage())
+                {
+                    keepAlive++;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+            }
+            else
+            {
+                keepAlive = 0;
+            }
+            bool connActive = true;
+            while(m_webSocket->hasMessage())
+            {
+                 connActive = HandleServerQuery();
+                 if( !connActive )
+                 {
+                     break;
+                 }
+            }
+            if( !connActive ) break;
+        }
+
+        if(!m_webSocket->isConnect) break;
+        m_isConnected.store( false, std::memory_order_release );
+
+        emscripten_websocket_close(m_webSocket->ws, 1000, "no reason");
+        tracy_free(m_webSocket);
+        m_webSocket = nullptr;
+    }
+
+#else
+
     ListenSocket listen;
     bool isListening = false;
     if( !dataPortSearch )
@@ -1854,7 +1979,10 @@ void Profiler::Worker()
             }
 #endif
             m_sock = listen.Accept();
-            if( m_sock ) break;
+            if( m_sock )
+            {
+                break;
+            }
 #ifndef TRACY_ON_DEMAND
             ProcessSysTime();
 #  ifdef TRACY_HAS_SYSPOWER
@@ -2174,6 +2302,7 @@ void Profiler::Worker()
             }
         }
     }
+#endif
 }
 
 #ifndef TRACY_NO_FRAME_IMAGE
@@ -2772,7 +2901,10 @@ Profiler::DequeueStatus Profiler::DequeueSerial()
                 break;
             }
         }
-        if( !m_serialQueue.empty() ) m_serialQueue.swap( m_serialDequeue );
+        if( !m_serialQueue.empty() )
+        {
+            m_serialQueue.swap( m_serialDequeue );
+        }
         if( lockHeld )
         {
             m_serialLock.unlock();
@@ -3167,7 +3299,11 @@ bool Profiler::SendData( const char* data, size_t len )
 {
     const lz4sz_t lz4sz = LZ4_compress_fast_continue( (LZ4_stream_t*)m_stream, data, m_lz4Buf + sizeof( lz4sz_t ), (int)len, LZ4Size, 1 );
     memcpy( m_lz4Buf, &lz4sz, sizeof( lz4sz ) );
+#ifdef __EMSCRIPTEN__
+    return m_webSocket->sendMessage(m_lz4Buf, lz4sz + sizeof(lz4sz_t));
+#else
     return m_sock->Send( m_lz4Buf, lz4sz + sizeof( lz4sz_t ) ) != -1;
+#endif
 }
 
 void Profiler::SendString( uint64_t str, const char* ptr, size_t len, QueueType type )
@@ -3566,8 +3702,20 @@ void Profiler::SymbolWorker()
 bool Profiler::HandleServerQuery()
 {
     ServerQueryPacket payload;
+#ifdef __EMSCRIPTEN__
+    auto message = m_webSocket->recvMssage();
+    if (!message || message->type == WebSocketClient::MessageType::Close)
+    {
+        return false;
+    }
+    std::string strPayload;
+    if (!message->readRaw(strPayload, sizeof( payload ))) {
+        return false;
+    }
+    memcpy(&payload, strPayload.c_str(), sizeof(payload));
+#else
     if( !m_sock->Read( &payload, sizeof( payload ), 10 ) ) return false;
-
+#endif
     uint8_t type;
     uint64_t ptr;
     memcpy( &type, &payload.type, sizeof( payload.type ) );
