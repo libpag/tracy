@@ -2720,7 +2720,6 @@ void Worker::NetworkWs()
         {
             goto close;
         }
-        std::cout << "recv message length = " << frameData.size() << std::endl;
         memcpy( &lz4sz, frameData.data(), sizeof(lz4sz) );
         memcpy( lz4buf.get(), frameData.data() + sizeof(lz4sz), lz4sz );
         frameData.clear();
