@@ -974,7 +974,7 @@ private:
     int64_t TscPeriod( uint64_t tsc ) { return int64_t( tsc * m_timerMul ); }
 
     Socket m_sock;
-    Socket* m_wsClientSock;
+    Socket* m_wsClientSock = nullptr;
     std::string m_addr;
     uint16_t m_port;
 

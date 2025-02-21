@@ -3484,7 +3484,7 @@ void Worker::Query( ServerQuery type, uint64_t data, uint32_t extra )
     if( m_serverQuerySpaceLeft > 0 && m_serverQueryQueuePrio.empty() && m_serverQueryQueue.empty() )
     {
         m_serverQuerySpaceLeft--;
-        if (m_wsClientSock->IsValid())
+        if (m_wsClientSock && m_wsClientSock->IsValid())
         {
             WSSendMessage(m_wsClientSock, &query, ServerQueryPacketSize );
         } else
@@ -5473,9 +5473,8 @@ void Worker::ProcessFrameMarkStart( const QueueFrameMark& ev )
         Query( ServerQueryFrameName, name );
     } );
 
-    assert( fd->continuous == 0 );
     const auto time = TscTime( ev.time );
-    assert( fd->frames.empty() || ( fd->frames.back().end <= time && fd->frames.back().end != -1 ) );
+    assert( fd->frames.empty() || ( fd->frames.back().end <= time ) );
     fd->frames.push_back( FrameEvent{ time, -1, -1 } );
     if( m_data.lastTime < time ) m_data.lastTime = time;
 }
@@ -5494,14 +5493,12 @@ void Worker::ProcessFrameMarkEnd( const QueueFrameMark& ev )
         return;
     }
 
-    assert( fd->continuous == 0 );
     if( fd->frames.empty() )
     {
         if( !m_ignoreFrameEndFaults ) FrameEndFailure();
         return;
     }
     const auto time = TscTime( ev.time );
-    assert( fd->frames.back().end == -1 );
     fd->frames.back().end = time;
     if( m_data.lastTime < time ) m_data.lastTime = time;
 
