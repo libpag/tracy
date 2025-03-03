@@ -102,7 +102,7 @@ public:
         const auto se = sb + sortedEnd;
         const auto sl = se - 1;
         const auto ue = v.end();
-#if CXX_17 || defined(__EMSCRIPTEN__)
+#if defined(CUSTOM_SORT) || defined(__EMSCRIPTEN__)
         pdqsort_branchless( sb, se, comp );
 #else
         ppqsort::sort( ppqsort::execution::par, sb, se, comp );
