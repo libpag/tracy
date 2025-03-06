@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.13)
 
 #include(../cmake/version.cmake)
 #project(TracyServer LANGUAGES CXX VERSION ${TRACY_VERSION_STRING})

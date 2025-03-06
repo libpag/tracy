@@ -4,6 +4,10 @@
 #include <TracyProtocol.hpp>
 #include <iostream>
 
+#ifdef _WIN32
+#include <winsock.h>
+#endif
+
 #include "../public/common/sha1.h"
 
 namespace tracy
@@ -164,7 +168,7 @@ int32_t WSSendMessage(Socket* socket, const void* buf, uint64_t numBytes)
 
   socket->Send((const char*)headerData, headerBytes); // header
   socket->Send((const char*)buf, (int)numBytes); // payload
-
+  return 0;
 }
 
 bool WSRecvMessage2(Socket* socket, std::vector<uint8_t>& frameData, int timeout)
