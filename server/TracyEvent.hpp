@@ -627,6 +627,8 @@ struct FrameEvent
 {
     int64_t start;
     int64_t end;
+    int64_t drawCall;
+    int64_t trangles;
     int32_t frameImage;
 };
 

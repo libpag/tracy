@@ -82,6 +82,7 @@ enum class QueueType : uint8_t
     FrameMarkMsgStart,
     FrameMarkMsgEnd,
     FrameVsync,
+    FrameDataInt,
     SourceLocation,
     LockAnnounce,
     LockTerminate,
@@ -339,6 +340,23 @@ struct QueuePlotDataFloat : public QueuePlotDataBase
 struct QueuePlotDataDouble : public QueuePlotDataBase
 {
     double val;
+};
+
+enum class FrameDataType: uint8_t
+{
+    DrawCall,
+    Trangles
+};
+
+struct QueueFrameDataBase
+{
+    uint64_t frameName;
+    FrameDataType dataType;
+};
+
+struct QueueFrameDataInt : QueueFrameDataBase
+{
+    int64_t val;
 };
 
 struct QueueMessage
@@ -730,6 +748,7 @@ struct QueueItem
         QueuePlotDataInt plotDataInt;
         QueuePlotDataFloat plotDataFloat;
         QueuePlotDataDouble plotDataDouble;
+        QueueFrameDataInt frameDataInt;
         QueueMessage message;
         QueueMessageColor messageColor;
         QueueMessageLiteral messageLiteral;
@@ -864,6 +883,7 @@ static constexpr size_t QueueDataSize[] = {
     sizeof( QueueHeader ) + sizeof( QueueFrameMark ),       // start
     sizeof( QueueHeader ) + sizeof( QueueFrameMark ),       // end
     sizeof( QueueHeader ) + sizeof( QueueFrameVsync ),
+    sizeof( QueueHeader ) + sizeof( QueueFrameDataInt ),
     sizeof( QueueHeader ) + sizeof( QueueSourceLocation ),
     sizeof( QueueHeader ) + sizeof( QueueLockAnnounce ),
     sizeof( QueueHeader ) + sizeof( QueueLockTerminate ),

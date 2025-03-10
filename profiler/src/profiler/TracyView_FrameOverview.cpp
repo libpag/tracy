@@ -193,6 +193,9 @@ void View::DrawFrames()
                     }
                 }
                 TextFocused( "Time from start of program:", TimeToStringExact( m_worker.GetFrameBegin( *m_frames, sel ) ) );
+                ImGui::TextDisabled( "DrawCall: %d", m_worker.GetFrameDrawCall( *m_frames, sel ) );
+                ImGui::TextDisabled( "Trangles: %d", m_worker.GetFrameTrangles( *m_frames, sel ) );
+
                 auto fi = m_worker.GetFrameImage( *m_frames, sel );
                 if( fi )
                 {

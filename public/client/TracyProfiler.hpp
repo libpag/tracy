@@ -372,6 +372,19 @@ public:
         TracyLfqCommit;
     }
 
+    static tracy_force_inline void SendFrameData( const char* frameName, FrameDataType type, int64_t val)
+    {
+#ifdef TRACY_ON_DEMAND
+        if( !GetProfiler().IsConnected() ) return;
+#endif
+        auto item = QueueSerial();
+        MemWrite( &item->hdr.type, QueueType::FrameDataInt );
+        MemWrite( &item->frameDataInt.frameName, (uint64_t)frameName );
+        MemWrite( &item->frameDataInt.dataType, type );
+        MemWrite( &item->frameDataInt.val, val );
+        QueueSerialFinish();
+    }
+
     static tracy_force_inline void ConfigurePlot( const char* name, PlotFormatType type, bool step, bool fill, uint32_t color )
     {
         TracyLfqPrepare( QueueType::PlotConfig );

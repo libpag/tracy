@@ -531,6 +531,8 @@ public:
     int64_t GetFrameTime( const FrameData& fd, size_t idx ) const;
     int64_t GetFrameBegin( const FrameData& fd, size_t idx ) const;
     int64_t GetFrameEnd( const FrameData& fd, size_t idx ) const;
+    int64_t GetFrameDrawCall( const FrameData& fd, size_t idx) const;
+    int64_t GetFrameTrangles( const FrameData& fd, size_t idx) const;
     const FrameImage* GetFrameImage( const FrameData& fd, size_t idx ) const;
     std::pair<int, int> GetFrameRange( const FrameData& fd, int64_t from, int64_t to );
 
@@ -726,6 +728,7 @@ private:
     tracy_force_inline void ProcessPlotDataFloat( const QueuePlotDataFloat& ev );
     tracy_force_inline void ProcessPlotDataDouble( const QueuePlotDataDouble& ev );
     tracy_force_inline void ProcessPlotConfig( const QueuePlotConfig& ev );
+    tracy_force_inline void ProcessFrameDataInt( const QueueFrameDataInt& ev );
     tracy_force_inline void ProcessMessage( const QueueMessage& ev );
     tracy_force_inline void ProcessMessageLiteral( const QueueMessageLiteral& ev );
     tracy_force_inline void ProcessMessageColor( const QueueMessageColor& ev );

@@ -481,7 +481,7 @@ Worker::Worker( const char* name, const char* program, const std::vector<ImportE
             });
 
             int64_t time = v.timestamp;
-            fd->frames.push_back( FrameEvent{ time, -1, -1 } );
+            fd->frames.push_back( FrameEvent{ time, -1, 0, 0, -1 } );
             if ( m_data.lastTime < time ) m_data.lastTime = time;
         }
         else
@@ -588,8 +588,8 @@ Worker::Worker( const char* name, const char* program, const std::vector<ImportE
             HandleFrameName( name, tmp, 5 );
         } );
 
-        m_data.framesBase->frames.push_back( FrameEvent{ 0, -1, -1 } );
-        m_data.framesBase->frames.push_back( FrameEvent{ 0, -1, -1 } );
+        m_data.framesBase->frames.push_back( FrameEvent{ 0, -1, 0, 0,  -1 } );
+        m_data.framesBase->frames.push_back( FrameEvent{ 0, -1, 0, 0, -1 } );
     }
 }
 
@@ -745,6 +745,8 @@ Worker::Worker( FileRead& f, EventType::Type eventMask, bool bgTasks, bool allow
             {
                 ptr->frames[j].start = ReadTimeOffset( f, refTime );
                 ptr->frames[j].end = -1;
+                f.Read(&ptr->frames[j].drawCall, sizeof(int64_t));
+                f.Read(&ptr->frames[j].trangles, sizeof(int64_t));
                 f.Read( &ptr->frames[j].frameImage, sizeof( int32_t ) );
             }
         }
@@ -754,6 +756,8 @@ Worker::Worker( FileRead& f, EventType::Type eventMask, bool bgTasks, bool allow
             {
                 ptr->frames[j].start = ReadTimeOffset( f, refTime );
                 ptr->frames[j].end = ReadTimeOffset( f, refTime );
+                f.Read(&ptr->frames[j].drawCall, sizeof(int64_t));
+                f.Read(&ptr->frames[j].trangles, sizeof(int64_t));
                 f.Read( &ptr->frames[j].frameImage, sizeof( int32_t ) );
             }
         }
@@ -2206,6 +2210,19 @@ int64_t Worker::GetFrameEnd( const FrameData& fd, size_t idx ) const
     }
 }
 
+
+int64_t Worker::GetFrameDrawCall( const FrameData& fd, size_t idx) const
+{
+    assert( idx < fd.frames.size() );
+    return fd.frames[idx].drawCall;
+}
+
+int64_t Worker::GetFrameTrangles( const FrameData& fd, size_t idx) const
+{
+    assert( idx < fd.frames.size() );
+    return fd.frames[idx].trangles;
+}
+
 const FrameImage* Worker::GetFrameImage( const FrameData& fd, size_t idx ) const
 {
     assert( idx < fd.frames.size() );
@@ -2813,8 +2830,8 @@ void Worker::ExecWs()
         m_timerMul = welcome.timerMul;
         m_data.baseTime = welcome.initBegin;
         const auto initEnd = TscTime( welcome.initEnd );
-        m_data.framesBase->frames.push_back( FrameEvent{ 0, -1, -1 } );
-        m_data.framesBase->frames.push_back( FrameEvent{ initEnd, -1, -1 } );
+        m_data.framesBase->frames.push_back( FrameEvent{ 0, -1, 0, 0, -1 } );
+        m_data.framesBase->frames.push_back( FrameEvent{ initEnd, -1, 0, 0, -1 } );
         m_data.lastTime = initEnd;
         m_delay = TscPeriod( welcome.delay );
         m_resolution = TscPeriod( welcome.resolution );
@@ -2853,7 +2870,7 @@ void Worker::ExecWs()
                 goto close;
             }
             m_data.frameOffset = onDemand.frames;
-            m_data.framesBase->frames.push_back( FrameEvent{ TscTime( onDemand.currentTime ), -1, -1 } );
+            m_data.framesBase->frames.push_back( FrameEvent{ TscTime( onDemand.currentTime ), -1, 0, 0, -1 } );
         }
     }
 
@@ -3087,8 +3104,8 @@ void Worker::Exec()
         m_timerMul = welcome.timerMul;
         m_data.baseTime = welcome.initBegin;
         const auto initEnd = TscTime( welcome.initEnd );
-        m_data.framesBase->frames.push_back( FrameEvent{ 0, -1, -1 } );
-        m_data.framesBase->frames.push_back( FrameEvent{ initEnd, -1, -1 } );
+        m_data.framesBase->frames.push_back( FrameEvent{ 0, -1, 0, 0, -1 } );
+        m_data.framesBase->frames.push_back( FrameEvent{ initEnd, -1, 0, 0, -1 } );
         m_data.lastTime = initEnd;
         m_delay = TscPeriod( welcome.delay );
         m_resolution = TscPeriod( welcome.resolution );
@@ -3127,7 +3144,7 @@ void Worker::Exec()
                 goto close;
             }
             m_data.frameOffset = onDemand.frames;
-            m_data.framesBase->frames.push_back( FrameEvent{ TscTime( onDemand.currentTime ), -1, -1 } );
+            m_data.framesBase->frames.push_back( FrameEvent{ TscTime( onDemand.currentTime ), -1, 0, 0, -1 } );
         }
     }
 
@@ -4858,6 +4875,9 @@ bool Worker::Process( const QueueItem& ev )
         AddSourceLocation( ev.srcloc );
         m_serverQuerySpaceLeft++;
         break;
+    case QueueType::FrameDataInt:
+        ProcessFrameDataInt(ev.frameDataInt);
+        break;
     case QueueType::ZoneText:
         ProcessZoneText();
         break;
@@ -5447,7 +5467,7 @@ void Worker::ProcessFrameMark( const QueueFrameMark& ev )
     assert( fd->continuous == 1 );
     const auto time = TscTime( ev.time );
     assert( fd->frames.empty() || fd->frames.back().start <= time );
-    fd->frames.push_back( FrameEvent{ time, -1, frameImage } );
+    fd->frames.push_back( FrameEvent{ time, -1, 0, 0, frameImage } );
     if( m_data.lastTime < time ) m_data.lastTime = time;
 
 #ifndef TRACY_NO_STATISTICS
@@ -5475,7 +5495,7 @@ void Worker::ProcessFrameMarkStart( const QueueFrameMark& ev )
 
     const auto time = TscTime( ev.time );
     assert( fd->frames.empty() || ( fd->frames.back().end <= time ) );
-    fd->frames.push_back( FrameEvent{ time, -1, -1 } );
+    fd->frames.push_back( FrameEvent{ time, -1, 0, 0, -1 } );
     if( m_data.lastTime < time ) m_data.lastTime = time;
 }
 
@@ -5531,7 +5551,7 @@ void Worker::ProcessFrameVsync( const QueueFrameVsync& ev )
     assert( fd->continuous == 1 );
     const auto time = TscTime( ev.time );
     assert( fd->frames.empty() || fd->frames.back().start <= time );
-    fd->frames.push_back( FrameEvent{ time, -1, -1 } );
+    fd->frames.push_back( FrameEvent{ time, -1, 0, 0, -1 } );
     if( m_data.lastTime < time ) m_data.lastTime = time;
 
 #ifndef TRACY_NO_STATISTICS
@@ -5937,6 +5957,29 @@ void Worker::ProcessPlotConfig( const QueuePlotConfig& ev )
     plot->showSteps = ev.step;
     plot->fill = ev.fill;
     plot->color = ev.color & 0xFFFFFF;
+}
+
+void Worker::ProcessFrameDataInt( const QueueFrameDataInt& ev)
+{
+    auto fd = m_data.frames.Retrieve( ev.frameName, [] ( uint64_t name ) -> FrameData* {
+        return nullptr;
+    }, [this] ( uint64_t name ) {
+        Query( ServerQueryFrameName, name );
+    } );
+
+    if (!fd || fd->frames.empty())
+    {
+        return;
+    }
+
+    if (ev.dataType == FrameDataType::Trangles)
+    {
+        fd->frames.back().trangles += ev.val;
+    }
+    else if (ev.dataType == FrameDataType::DrawCall)
+    {
+        fd->frames.back().drawCall += ev.val;
+    }
 }
 
 void Worker::ProcessMessage( const QueueMessage& ev )
@@ -8206,6 +8249,8 @@ void Worker::Write( FileWrite& f, bool fiDict )
             for( auto& fe : fd->frames )
             {
                 WriteTimeOffset( f, refTime, fe.start );
+                f.Write( &fe.drawCall, sizeof(fe.drawCall) );
+                f.Write( &fe.trangles, sizeof(fe.trangles) );
                 f.Write( &fe.frameImage, sizeof( fe.frameImage ) );
             }
         }
@@ -8215,6 +8260,8 @@ void Worker::Write( FileWrite& f, bool fiDict )
             {
                 WriteTimeOffset( f, refTime, fe.start );
                 WriteTimeOffset( f, refTime, fe.end );
+                f.Write( &fe.drawCall, sizeof(fe.drawCall) );
+                f.Write( &fe.trangles, sizeof(fe.trangles) );
                 f.Write( &fe.frameImage, sizeof( fe.frameImage ) );
             }
         }
