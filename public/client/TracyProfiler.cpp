@@ -1787,8 +1787,8 @@ void Profiler::Worker()
             tracy_free(m_webSocket);
             m_webSocket = nullptr;
         }
-        m_webSocket = new WebSocketClient("ws://localhost:8086");
-        // if (!m_webSocket->isConnect) break;
+        m_webSocket = new WebSocketClient("ws://localhost:8087");
+        if (!m_webSocket->isConnect) break;
         // Handshake
         {
             auto message = m_webSocket->recvMssage();

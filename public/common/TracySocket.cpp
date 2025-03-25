@@ -85,7 +85,7 @@ bool WebSocketClient::Message::readRaw(std::string& buf, int len) {
 }
 
 WebSocketClient::WebSocketClient(const char* url) {
-    EmscriptenWebSocketCreateAttributes ws_attrs = {url, NULL, EM_TRUE};
+    EmscriptenWebSocketCreateAttributes ws_attrs = {url, NULL, EM_FALSE};
     ws = emscripten_websocket_new(&ws_attrs);
     if (!ws)
     {
@@ -98,6 +98,35 @@ WebSocketClient::WebSocketClient(const char* url) {
     emscripten_websocket_set_onerror_callback(ws, this, onError);
     emscripten_websocket_set_onclose_callback(ws, this, onClose);
     emscripten_websocket_set_onmessage_callback(ws, this, onMessage);
+
+    for(;;)
+    {
+        unsigned short ready_state = 0;
+        emscripten_websocket_get_ready_state(ws, &ready_state);
+        if(ready_state == 0)
+        {
+            sleep(1);
+        }
+        else if(ready_state == 1) // connect
+        {
+            break;
+        }
+        else if (ready_state == 2)
+        {
+            error = "Socket closing while connecting";
+            break;
+        }
+        else if (ready_state == 3)
+        {
+            error = "Socket closing while connecting";
+            break;
+        }
+        else
+        {
+            error = "Socket has invalid ready state while connecting";
+            break;
+        }
+    }
 }
 
 bool WebSocketClient::hasMessage()
