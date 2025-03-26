@@ -1,0 +1,32 @@
+#pragma once
+#include "../common/TracySocket.hpp"
+#include <queue>
+#include <vector>
+#include <functional>
+#include "../common/LockFreeQueue.h"
+namespace tracy
+{
+class LayerProfiler
+{
+public:
+  static void SendLayerData(const std::vector<uint8_t>& data);
+  static void SetLayerCallBack(std::function<void(const std::vector<uint8_t>&)> callback);
+  LayerProfiler();
+  void setData(const std::vector<uint8_t>& data);
+  void setCallBack(std::function<void(const std::vector<uint8_t>&)> callback);
+private:
+  void SendWork();
+  void recvWork();
+  void spawnWorkTread();
+private:
+#ifdef __EMSCRIPTEN__
+  std::shared_ptr<WebSocketClient> m_WebSocket;
+#endif
+  LockFreeQueue<std::vector<uint8_t>> m_Queue;
+  std::shared_ptr<std::thread> m_SendThread;
+  std::shared_ptr<std::thread> m_RecvThread;
+  std::function<void(const std::vector<uint8_t>&)> m_Callback;
+};
+}
+
+

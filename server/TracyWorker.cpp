@@ -2776,6 +2776,7 @@ void Worker::ExecWs()
     bool isListen = listen.Listen(8087, 4);
     if (!isListen)
     {
+        printf("listen failure!\n");
         goto close;
     }
     for(;;)

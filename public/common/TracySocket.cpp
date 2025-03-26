@@ -146,17 +146,28 @@ bool WebSocketClient::sendMessage(char* text, int textLength){
 
 WebSocketClient::Message* WebSocketClient::recvMssage(){
     uint64_t lastTime = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-    while (queue.empty())
+    while (queue.empty() )
     {
         const auto t = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-        if (t - lastTime > 3000000000)
+        if (t - lastTime > 3000000000 )
         {
             return nullptr;
         }
     }
-    buffer = std::move(queue.front());
+    buffer = std::move( queue.front() );
     queue.pop();
     return &buffer;
+}
+
+bool WebSocketClient::recvMssageImmdiately(Message& message)
+{
+    if(queue.empty())
+    {
+        return false;
+    }
+    message = std::move(queue.front());
+    queue.pop();
+    return true;
 }
 
 EM_BOOL WebSocketClient::onOpen(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData) {
@@ -638,8 +649,18 @@ bool ListenSocket::Listen( uint16_t port, int backlog )
     int val = 1;
     setsockopt( m_sock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof( val ) );
 #endif
-    if( bind( m_sock, res->ai_addr, res->ai_addrlen ) == -1 ) { freeaddrinfo( res ); Close(); return false; }
-    if( listen( m_sock, backlog ) == -1 ) { freeaddrinfo( res ); Close(); return false; }
+    if( bind( m_sock, res->ai_addr, res->ai_addrlen ) == -1 )
+    {
+        printf("bind error! %s\n", strerror( errno ));
+        freeaddrinfo( res );
+        Close();
+        return false;
+    }
+    if( listen( m_sock, backlog ) == -1 )
+    {
+        printf("listen error! %s\n", strerror( errno ));
+        freeaddrinfo( res ); Close(); return false;
+    }
     freeaddrinfo( res );
     return true;
 }

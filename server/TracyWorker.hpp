@@ -690,6 +690,7 @@ private:
     void Exec();
     void NetworkWs();
     void ExecWs();
+    void ExecWsLayer();
     void Query( ServerQuery type, uint64_t data, uint32_t extra = 0 );
     void QueryTerminate();
     void QuerySourceFile( const char* fn, const char* image );

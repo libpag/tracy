@@ -126,6 +126,9 @@
 #define TracyFiberEnterHint(x,y)
 #define TracyFiberLeave
 
+#define TracyLayerData(x)
+#define TracyFeedBackCallBack(x)
+
 #else
 
 #include <string.h>
@@ -133,6 +136,7 @@
 #include "../client/TracyLock.hpp"
 #include "../client/TracyProfiler.hpp"
 #include "../client/TracyScoped.hpp"
+#include "../client/LayerProfiler.h"
 
 #define TracyNoop tracy::ProfilerAvailable()
 
@@ -198,6 +202,9 @@
 #define TracyPlotConfig( name, type, step, fill, color ) tracy::Profiler::ConfigurePlot( name, type, step, fill, color )
 
 #define TracyAppInfo( txt, size ) tracy::Profiler::MessageAppInfo( txt, size )
+
+#define TracyLayerData(x) tracy::LayerProfiler::SendLayerData(x)
+#define TracyFeedBackCallBack(x) tracy::LayerProfiler::SetLayerCallBack(x)
 
 #if defined TRACY_HAS_CALLSTACK && defined TRACY_CALLSTACK
 #  define TracyMessage( txt, size ) tracy::Profiler::Message( txt, size, TRACY_CALLSTACK )

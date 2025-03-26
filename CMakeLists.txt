@@ -140,6 +140,7 @@ set(client_includes
     ${TRACY_PUBLIC_DIR}/client/TracyFastVector.hpp
     ${TRACY_PUBLIC_DIR}/client/TracyLock.hpp
     ${TRACY_PUBLIC_DIR}/client/TracyProfiler.hpp
+    ${TRACY_PUBLIC_DIR}/client/LayerProfiler.h
     ${TRACY_PUBLIC_DIR}/client/TracyRingBuffer.hpp
     ${TRACY_PUBLIC_DIR}/client/TracyScoped.hpp
     ${TRACY_PUBLIC_DIR}/client/TracyStringHelpers.hpp
