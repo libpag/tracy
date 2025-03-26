@@ -2771,6 +2771,7 @@ void Worker::ExecWs()
 
     std::chrono::time_point<std::chrono::high_resolution_clock> t0;
     uint32_t protocolVersion = ProtocolVersion;
+    std::vector<uint8_t> wsData;
     ListenSocket listen;
     bool isListen = listen.Listen(8087, 4);
     if (!isListen)
@@ -2794,11 +2795,13 @@ void Worker::ExecWs()
     WSSendMessage(m_wsClientSock, HandshakeShibboleth, HandshakeShibbolethSize);
     WSSendMessage(m_wsClientSock, &protocolVersion, sizeof( protocolVersion ) );
     HandshakeStatus handshake;
-    if( !WSRecvMessage(m_wsClientSock, &handshake, sizeof( handshake ), 10) )
+    if( !WSRecvMessage2(m_wsClientSock, wsData, 10) )
     {
         m_handshake.store( HandshakeDropped, std::memory_order_relaxed );
         goto close;
     }
+    memcpy( &handshake, wsData.data(), sizeof(handshake) );
+    wsData.clear();
     m_handshake.store( handshake, std::memory_order_relaxed );
     switch( handshake )
     {
@@ -2822,11 +2825,13 @@ void Worker::ExecWs()
     } );
     {
         WelcomeMessage welcome;
-        if( !WSRecvMessage(m_wsClientSock, &welcome, sizeof( welcome ), 10) )
+        if( !WSRecvMessage2(m_wsClientSock, wsData, 10) )
         {
             m_handshake.store( HandshakeDropped, std::memory_order_relaxed );
             goto close;
         }
+        memcpy( &welcome, wsData.data(), sizeof(welcome) );
+        wsData.clear();
         m_timerMul = welcome.timerMul;
         m_data.baseTime = welcome.initBegin;
         const auto initEnd = TscTime( welcome.initEnd );
@@ -2856,7 +2861,7 @@ void Worker::ExecWs()
         auto lt = localtime( &date );
         strftime( dtmp, 64, "%F %T", lt );
         char tmp[1024];
-        sprintf( tmp, "%s @ %s", welcome.programName, dtmp );
+        snprintf( tmp, 1024, "%s @ %s", welcome.programName, dtmp );
         m_captureName = tmp;
 
         m_hostInfo = welcome.hostInfo;
@@ -2864,11 +2869,13 @@ void Worker::ExecWs()
         if( m_onDemand )
         {
             OnDemandPayloadMessage onDemand;
-            if( !WSRecvMessage(m_wsClientSock, &onDemand, sizeof( onDemand ), 10 ) )
+            if( !WSRecvMessage2(m_wsClientSock, wsData, 10 ) )
             {
                 m_handshake.store( HandshakeDropped, std::memory_order_relaxed );
                 goto close;
             }
+            memcpy( &onDemand, wsData.data(), sizeof(onDemand) );
+            wsData.clear();
             m_data.frameOffset = onDemand.frames;
             m_data.framesBase->frames.push_back( FrameEvent{ TscTime( onDemand.currentTime ), -1, 0, 0, -1 } );
         }
