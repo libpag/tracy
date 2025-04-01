@@ -31,11 +31,10 @@ void LayerProfiler::SendWork()
 {
 #ifdef __EMSCRIPTEN__
     // create websocket
-    printf( "worker start \n" );
     while( true )
     {
+        std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
         m_WebSocket = std::make_shared<WebSocketClient>( "ws://localhost:8085" );
-        std::this_thread::sleep_for( std::chrono::seconds( 5 ) );
         if( m_WebSocket->isConnect )
         {
             printf( "web socket create success!\n" );
@@ -56,6 +55,36 @@ void LayerProfiler::SendWork()
             m_WebSocket->sendMessage( (char*)data.data(), data.size() );
         }
     }
+#else
+    int port = 8084;
+    printf("Start listen port: %d!\n", port);
+    bool isListen = m_ListenSocket.Listen(port, 4);
+    if(!isListen)
+    {
+        printf("Listen port: %d return false!\n", port);
+    }
+    while(true)
+    {
+        std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
+        m_Socket = m_ListenSocket.Accept();
+        if(m_Socket)
+        {
+            printf("tcp already connect!\n");
+            break;
+        }
+    }
+
+    while(true)
+    {
+        std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
+        if(!m_Queue.empty())
+        {
+            auto data = *m_Queue.front();
+            m_Queue.pop();
+            m_Socket->Send(data.data(), data.size());
+        }
+    }
+
 #endif
 }
 
@@ -76,6 +105,24 @@ void LayerProfiler::recvWork()
             }
         }
     }
+#else
+    while(true)
+    {
+        std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
+        if(m_Socket && m_Socket->HasData())
+        {
+            std::vector<uint8_t> data(9);
+            m_Socket->ReadUpTo(data.data(), data.size());
+            messages.push(std::move(data));
+        }
+        if(!messages.empty())
+        {
+            if(m_Callback){
+                m_Callback(messages.front());
+                messages.pop();
+            }
+        }
+    }
 #endif
 }
 
@@ -88,12 +135,11 @@ void LayerProfiler::spawnWorkTread()
 void LayerProfiler::setData( const std::vector<uint8_t>& data ) { m_Queue.push( data ); }
 void LayerProfiler::setCallBack( std::function<void( const std::vector<uint8_t>& )> callback )
 {
-#ifdef __EMSCRIPTEN__
     if(!m_Callback)
     {
         m_Callback = callback;
     }
-#endif
+
 }
 }
 
