@@ -27,11 +27,17 @@ LayerProfiler::LayerProfiler()
     spawnWorkTread();
 }
 
+LayerProfiler::~LayerProfiler(){
+    m_StopFlag.store(true, std::memory_order_release);
+    m_SendThread->join();
+    m_RecvThread->join();
+}
+
 void LayerProfiler::SendWork()
 {
 #ifdef __EMSCRIPTEN__
     // create websocket
-    while( true )
+    while( !m_StopFlag.load(std::memory_order_acquire) )
     {
         std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
         m_WebSocket = std::make_shared<WebSocketClient>( "ws://localhost:8085" );
@@ -44,7 +50,7 @@ void LayerProfiler::SendWork()
         m_WebSocket.reset();
     }
 
-    while( true )
+    while( !m_StopFlag.load(std::memory_order_acquire) )
     {
         std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
         if( !m_WebSocket->isConnect ) break;
@@ -63,10 +69,10 @@ void LayerProfiler::SendWork()
     {
         printf("Listen port: %d return false!\n", port);
     }
-    while(true)
+    while(!m_StopFlag.load(std::memory_order_acquire))
     {
         std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
-        m_Socket = m_ListenSocket.Accept();
+        m_Socket = std::shared_ptr<Socket>(m_ListenSocket.Accept());
         if(m_Socket)
         {
             printf("tcp already connect!\n");
@@ -74,7 +80,7 @@ void LayerProfiler::SendWork()
         }
     }
 
-    while(true)
+    while(!m_StopFlag.load(std::memory_order_acquire))
     {
         std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
         if(!m_Queue.empty())
@@ -91,7 +97,7 @@ void LayerProfiler::SendWork()
 void LayerProfiler::recvWork()
 {
 #ifdef __EMSCRIPTEN__
-    while(true)
+    while(!m_StopFlag.load(std::memory_order_acquire))
     {
         std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
         WebSocketClient::Message message;
@@ -106,7 +112,7 @@ void LayerProfiler::recvWork()
         }
     }
 #else
-    while(true)
+    while(!m_StopFlag.load(std::memory_order_acquire))
     {
         std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
         if(m_Socket && m_Socket->HasData())
@@ -128,6 +134,7 @@ void LayerProfiler::recvWork()
 
 void LayerProfiler::spawnWorkTread()
 {
+    m_StopFlag.store(false, std::memory_order_release);
     m_SendThread = std::make_shared<std::thread>(&LayerProfiler::SendWork, this);
     m_RecvThread = std::make_shared<std::thread>(&LayerProfiler::recvWork, this);
 }
