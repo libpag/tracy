@@ -24,7 +24,7 @@ private:
   std::shared_ptr<WebSocketClient> m_WebSocket;
 #else
   ListenSocket m_ListenSocket;
-  std::shared_ptr<Socket> m_Socket = nullptr;
+  Socket* m_Socket = nullptr;
   std::queue<std::vector<uint8_t>> messages;
 #endif
   LockFreeQueue<std::vector<uint8_t>> m_Queue;

@@ -1,4 +1,5 @@
 #include "LayerProfiler.h"
+#include "../common/TracyAlloc.hpp"
 #include <thread>
 #include <chrono>
 
@@ -31,6 +32,9 @@ LayerProfiler::~LayerProfiler(){
     m_StopFlag.store(true, std::memory_order_release);
     m_SendThread->join();
     m_RecvThread->join();
+    if(m_Socket){
+        tracy_free(m_Socket);
+    }
 }
 
 void LayerProfiler::SendWork()
@@ -72,7 +76,8 @@ void LayerProfiler::SendWork()
     while(!m_StopFlag.load(std::memory_order_acquire))
     {
         std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
-        m_Socket = std::shared_ptr<Socket>(m_ListenSocket.Accept());
+        //m_Socket = std::shared_ptr<Socket>(m_ListenSocket.Accept());
+        m_Socket = m_ListenSocket.Accept();
         if(m_Socket)
         {
             printf("tcp already connect!\n");
